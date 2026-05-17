@@ -1,0 +1,14 @@
+{
+  "appId": "studio.episteme.app",
+  "appName": "Episteme",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "ios": {
+    "scheme": "Episteme"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0
+    }
+  }
+}

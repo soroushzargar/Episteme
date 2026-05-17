@@ -11,6 +11,8 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+release/
+ios/
 downloads/
 eggs/
 .eggs/
@@ -213,6 +215,22 @@ tempCodeRunnerFile.py
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Episteme local runtime artifacts
+data/*
+!data/.gitkeep
+exports/*
+!exports/.gitkeep
+
+# Frontend
+node_modules/
+dist/
+
+# Local OS/editor artifacts
+.DS_Store
+
+# Editable install metadata
+*.egg-info/
 
 # Streamlit
 .streamlit/secrets.toml

@@ -1,0 +1,65 @@
+{
+  "name": "episteme",
+  "version": "0.1.0",
+  "description": "A local-first research studio for developing curiosities into publishable artifacts.",
+  "author": "Episteme",
+  "private": true,
+  "type": "module",
+  "main": "desktop/electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "desktop:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "desktop:build": "npm run build && electron-builder --mac",
+    "desktop:dir": "npm run build && electron-builder --mac --dir",
+    "ios:init": "npm run build && npx cap add ios",
+    "ios:sync": "npm run build && npx cap sync ios",
+    "ios:open": "npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
+    "@tiptap/extension-placeholder": "^3.23.4",
+    "@tiptap/react": "^3.23.4",
+    "@tiptap/starter-kit": "^3.23.4",
+    "@vitejs/plugin-react": "^5.1.1",
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^42.1.0",
+    "electron-builder": "^26.8.1",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "studio.episteme.app",
+    "productName": "Episteme",
+    "icon": "icons/icon.png",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/electron/**/*",
+      "icons/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "icons/icon.png",
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "desktop/electron/entitlements.mac.plist",
+      "entitlementsInherit": "desktop/electron/entitlements.mac.plist"
+    }
+  }
+}

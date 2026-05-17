@@ -24,6 +24,7 @@ import {
   X
 } from "lucide-react";
 import { createApi, toApiStage } from "./api";
+import { triggerAnimation } from "./animation";
 import { BLOCK_TYPES, STAGES, TEMPLATE_ROWS } from "./constants";
 import "./styles.css";
 
@@ -145,6 +146,7 @@ function App() {
     setProjectId(project.id);
     setView("workspace");
     setStage("seed");
+    triggerAnimation("anim-scale", 300);
     await refreshProjects(api);
   }
 
@@ -152,12 +154,14 @@ function App() {
     if (!bundle) return;
     const updated = await api.updateProject(bundle.project.id, patch);
     setBundle((current) => ({ ...current, project: updated }));
+    triggerAnimation("stage-change", 420);
     await refreshProjects(api);
   }
 
   async function deleteProject(projectIdToDelete) {
     if (!api || !projectIdToDelete) return;
     if (!window.confirm("Delete this project permanently? This cannot be undone.")) return;
+    triggerAnimation("anim-fade", 220);
     await api.deleteProject(projectIdToDelete);
     const loaded = await refreshProjects(api);
     const nextProject = loaded.find((project) => project.id !== projectIdToDelete) || loaded[0] || null;
@@ -181,6 +185,7 @@ function App() {
       content: content || typeLabel(type),
       metadata: { stage: stageId }
     });
+    triggerAnimation("anim-fade-up", 300);
     await refreshBundle();
   }
 
@@ -190,6 +195,7 @@ function App() {
   }
 
   async function deleteBlock(block) {
+    triggerAnimation("anim-fade", 220);
     await api.deleteBlock(block.id);
     await refreshBundle();
   }
@@ -583,6 +589,7 @@ function Drafting({ bundle, api, onRefresh }) {
 
   async function saveDraft(next = editor?.getHTML() || draft) {
     setSaving(true);
+    triggerAnimation("stage-change", 420);
     await api.saveDraft(bundle.project.id, { content: next, content_format: "html" });
     setSaving(false);
     await onRefresh();

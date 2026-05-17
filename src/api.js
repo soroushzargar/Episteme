@@ -1,7 +1,12 @@
 import { API_STAGE_BY_ID, SAMPLE_BLOCKS, SAMPLE_DRAFT, SAMPLE_PROJECTS, STAGE_BY_API } from "./constants";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-const LOCAL_KEY = "episteme.local.v1";
+const LOCAL_KEY = "episteme.local.v2";
+const LOCAL_CACHE_VERSION = 2;
+
+function getNativeSyncBridge() {
+  return globalThis?.__EPISTEME_SYNC__ || globalThis?.Capacitor?.Plugins?.EpistemeSync || null;
+}
 
 function normalizeProject(project) {
   return {
@@ -58,7 +63,11 @@ async function request(path, options = {}) {
 
 function loadLocal() {
   const saved = localStorage.getItem(LOCAL_KEY);
-  if (saved) return JSON.parse(saved);
+  if (saved) {
+    const parsed = JSON.parse(saved);
+    if (parsed && parsed.version === LOCAL_CACHE_VERSION && parsed.data) return parsed.data;
+    if (parsed && parsed.projects && parsed.bundles) return parsed;
+  }
   const initial = {
     projects: SAMPLE_PROJECTS,
     bundles: {
@@ -79,7 +88,7 @@ function loadLocal() {
 }
 
 function saveLocal(data) {
-  localStorage.setItem(LOCAL_KEY, JSON.stringify(data));
+  localStorage.setItem(LOCAL_KEY, JSON.stringify({ version: LOCAL_CACHE_VERSION, data }));
 }
 
 function localApi() {
@@ -288,7 +297,54 @@ function remoteApi() {
   };
 }
 
+function nativeApi(bridge) {
+  return {
+    mode: "cloudkit",
+    async listProjects() {
+      return (await bridge.listProjects()).map(normalizeProject);
+    },
+    async createProject(payload) {
+      return normalizeProject(await bridge.createProject(payload));
+    },
+    async getProject(projectId) {
+      return normalizeBundle(await bridge.getProject(projectId));
+    },
+    async updateProject(projectId, patch) {
+      return normalizeProject(await bridge.updateProject(projectId, patch));
+    },
+    async deleteProject(projectId) {
+      return bridge.deleteProject(projectId);
+    },
+    async createBlock(projectId, payload) {
+      return bridge.createBlock(projectId, payload);
+    },
+    async updateBlock(blockId, patch) {
+      return bridge.updateBlock(blockId, patch);
+    },
+    async deleteBlock(blockId) {
+      return bridge.deleteBlock(blockId);
+    },
+    async saveDraft(projectId, payload) {
+      return bridge.saveDraft(projectId, payload);
+    },
+    async updateEvidence(blockId, patch) {
+      return bridge.updateEvidence(blockId, patch);
+    },
+    async createDraftEvidenceLink(projectId, payload) {
+      return bridge.createDraftEvidenceLink(projectId, payload);
+    },
+    async deleteDraftEvidenceLink(linkId) {
+      return bridge.deleteDraftEvidenceLink(linkId);
+    },
+    async exportProject(projectId, type) {
+      return bridge.exportProject(projectId, type);
+    }
+  };
+}
+
 export async function createApi() {
+  const bridge = getNativeSyncBridge();
+  if (bridge) return nativeApi(bridge);
   try {
     await request("/health");
     return remoteApi();

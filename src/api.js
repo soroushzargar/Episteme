@@ -193,13 +193,15 @@ function localApi() {
     },
     async saveDraft(projectId, payload) {
       const data = loadLocal();
+      const updatedAt = new Date().toISOString();
       data.bundles[projectId].draft = {
         ...data.bundles[projectId].draft,
         ...payload,
         revision: (data.bundles[projectId].draft?.revision || 1) + 1,
-        updated_at: new Date().toISOString()
+        updated_at: updatedAt
       };
-      data.bundles[projectId].project.stage = "Drafting";
+      data.bundles[projectId].project.updated_at = updatedAt;
+      data.projects = data.projects.map((project) => project.id === projectId ? { ...project, updated_at: updatedAt } : project);
       saveLocal(data);
       return data.bundles[projectId].draft;
     },

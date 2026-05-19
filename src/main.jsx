@@ -67,6 +67,12 @@ const EvidenceCitation = Mark.create({
   }
 });
 
+const editableTextFlushers = new Set();
+
+async function flushEditableTextEditors() {
+  await Promise.all([...editableTextFlushers].map((flush) => flush()));
+}
+
 function App() {
   const [api, setApi] = useState(null);
   const [mode, setMode] = useState("loading");
@@ -102,13 +108,14 @@ function App() {
     const loaded = await client.listProjects();
     setProjects(loaded);
     if (!projectId && loaded[0]) setProjectId(loaded[0].id);
+    return loaded;
   }, [api, projectId]);
 
   const refreshBundle = useCallback(async (id = projectId, client = api) => {
     if (!client || !id) return;
     const loaded = await client.getProject(id);
     setBundle(loaded);
-    setStage((current) => current || loaded.project.stageId || "seed");
+    setStage(loaded.project.stageId || "seed");
   }, [api, projectId]);
 
   useEffect(() => {
@@ -158,6 +165,15 @@ function App() {
     await refreshProjects(api);
   }
 
+  async function changeStage(next) {
+    await flushEditableTextEditors();
+    setStage(next);
+    if (bundle?.project?.stageId !== next) {
+      await patchProject({ stage: toApiStage(next) });
+      setStage(next);
+    }
+  }
+
   async function deleteProject(projectIdToDelete) {
     if (!api || !projectIdToDelete) return;
     if (!window.confirm("Delete this project permanently? This cannot be undone.")) return;
@@ -178,21 +194,43 @@ function App() {
     setStage(nextProject.stageId || "seed");
   }
 
-  async function createBlock(type, stageId = stage, content = "") {
+  const createBlock = useCallback(async (type, stageId = stage, content = "", metadata = {}, options = {}) => {
     if (!bundle) return;
-    await api.createBlock(bundle.project.id, {
+    const block = await api.createBlock(bundle.project.id, {
       type,
       content: content || typeLabel(type),
-      metadata: { stage: stageId }
+      metadata: { stage: stageId, ...metadata }
     });
-    triggerAnimation("anim-fade-up", 300);
-    await refreshBundle();
-  }
+    const normalized = { ...block, metadata: block.metadata || {}, links: block.links || [], stageId: block.metadata?.stage || stageId };
+    setBundle((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        blocks: [...current.blocks, normalized],
+        evidence: normalized.type === "evidence" ? [...current.evidence, { ...normalized, priority: 0, checked: false }] : current.evidence
+      };
+    });
+    if (options.animate !== false) triggerAnimation("anim-fade-up", 300);
+    return normalized;
+  }, [api, bundle, stage]);
 
-  async function updateBlock(block, patch) {
-    await api.updateBlock(block.id, patch);
-    await refreshBundle();
-  }
+  const updateBlock = useCallback(async (block, patch) => {
+    const updated = await api.updateBlock(block.id, patch);
+    setBundle((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        blocks: current.blocks.map((item) => item.id === block.id ? { ...item, ...updated } : item),
+        evidence: current.evidence.map((item) => item.id === block.id ? { ...item, ...updated } : item)
+      };
+    });
+    return updated;
+  }, [api]);
+
+  const updateDraft = useCallback((savedDraft) => {
+    if (!savedDraft) return;
+    setBundle((current) => current ? { ...current, draft: { ...current.draft, ...savedDraft } } : current);
+  }, []);
 
   async function deleteBlock(block) {
     triggerAnimation("anim-fade", 220);
@@ -230,7 +268,7 @@ function App() {
         mode={mode}
         stage={stage}
         onDashboard={() => setView("dashboard")}
-        onExport={() => setStage("publishing")}
+        onExport={() => changeStage("publishing")}
         onDeleteProject={() => deleteProject(bundle.project.id)}
         theme={theme}
         setTheme={setTheme}
@@ -239,10 +277,7 @@ function App() {
         projects={projects}
         project={bundle.project}
         stage={stage}
-        setStage={async (next) => {
-          setStage(next);
-          await patchProject({ stage: toApiStage(next) });
-        }}
+        setStage={changeStage}
         blocksByStage={blocksByStage}
         onProject={setProjectId}
         onDashboard={() => setView("dashboard")}
@@ -252,7 +287,7 @@ function App() {
       ) : (
         <main className="main">
           <div className={`main-inner ${noRight ? "wide" : ""}`}>
-            <StageStrip stage={stage} setStage={setStage} blocksByStage={blocksByStage} />
+            <StageStrip stage={stage} setStage={changeStage} blocksByStage={blocksByStage} />
             <PageHeader stage={stage} project={bundle.project} blocksByStage={blocksByStage} />
             {["seed", "distillation", "thesis"].includes(stage) && (
               <TemplateEditor stage={stage} blocks={blocksByStage[stage] || []} onCreate={createBlock} onUpdate={updateBlock} />
@@ -267,10 +302,10 @@ function App() {
               />
             )}
             {stage === "evidence" && (
-              <EvidenceManager bundle={bundle} api={api} onRefresh={refreshBundle} onAdd={createBlock} />
+              <EvidenceManager bundle={bundle} api={api} onRefresh={refreshBundle} onAdd={createBlock} onUpdateBlock={updateBlock} />
             )}
             {stage === "drafting" && (
-              <Drafting bundle={bundle} api={api} onRefresh={refreshBundle} />
+              <Drafting bundle={bundle} api={api} onRefresh={refreshBundle} onDraftSaved={updateDraft} />
             )}
             {stage === "publishing" && (
               <Publishing bundle={bundle} api={api} onRefresh={refreshBundle} />
@@ -449,7 +484,7 @@ function TemplateEditor({ stage, blocks, onCreate, onUpdate }) {
   async function save(key, content) {
     const existing = byKey.get(key);
     if (existing) await onUpdate(existing, { content, metadata: { ...existing.metadata, stage, templateKey: key } });
-    else if (content.trim()) await onCreate(key === "main" ? "claim" : key === "question" || key === "broad" || key === "precise" || key === "researchable" ? "question" : "observation", stage, content);
+    else if (content.trim()) await onCreate(key === "main" ? "claim" : key === "question" || key === "broad" || key === "precise" || key === "researchable" ? "question" : "observation", stage, content, { templateKey: key }, { animate: false });
   }
   return (
     <div className="templ">
@@ -498,7 +533,7 @@ function SemanticBlocks({ blocks, allBlocks, onAdd, onUpdate, onDelete }) {
   );
 }
 
-function EvidenceManager({ bundle, api, onRefresh, onAdd }) {
+function EvidenceManager({ bundle, api, onRefresh, onAdd, onUpdateBlock }) {
   const evidence = evidenceBlocks(bundle);
   async function patch(item, patch) {
     await api.updateEvidence(item.id, patch);
@@ -514,7 +549,7 @@ function EvidenceManager({ bundle, api, onRefresh, onAdd }) {
         {evidence.map((item) => (
           <article className={`evidence-row ${item.checked ? "checked" : ""}`} key={item.id}>
             <div className="ev-state">{item.checked ? <Check size={14} /> : <Circle size={12} />}</div>
-            <EditableText value={item.content} onSave={(content) => api.updateBlock ? api.updateBlock(item.id, { content }).then(onRefresh) : null} />
+            <EditableText value={item.content} onSave={(content) => onUpdateBlock(item, { content })} />
             <div className="priority">
               <span>Priority</span>
               <input type="range" min="0" max="100" value={item.priority || 0} onChange={(event) => patch(item, { priority: Number(event.target.value) })} />
@@ -528,9 +563,18 @@ function EvidenceManager({ bundle, api, onRefresh, onAdd }) {
   );
 }
 
-function Drafting({ bundle, api, onRefresh }) {
+function Drafting({ bundle, api, onRefresh, onDraftSaved }) {
   const editorRef = useRef(null);
   const citationClearTimerRef = useRef(null);
+  const autosaveTimerRef = useRef(null);
+  const scheduleDraftSaveRef = useRef(null);
+  const dirtyRef = useRef(false);
+  const inFlightDraftRef = useRef(null);
+  const lastSavedDraftRef = useRef(draftToEditorContent(bundle.draft));
+  const latestDraftRef = useRef(draftToEditorContent(bundle.draft));
+  const projectIdRef = useRef(bundle.project.id);
+  const saveSeqRef = useRef(0);
+  const mountedRef = useRef(false);
   const [draft, setDraft] = useState(bundle.draft?.content || "");
   const [pending, setPending] = useState(null);
   const [activeCitation, setActiveCitation] = useState(null);
@@ -553,6 +597,10 @@ function Drafting({ bundle, api, onRefresh }) {
       }
     },
     onUpdate: ({ editor }) => {
+      const next = editor.getHTML();
+      latestDraftRef.current = next;
+      dirtyRef.current = next !== lastSavedDraftRef.current;
+      scheduleDraftSaveRef.current?.(next);
       setDraft(editor.getText());
       setPending(null);
     },
@@ -579,21 +627,118 @@ function Drafting({ bundle, api, onRefresh }) {
   });
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const saveDraft = useCallback(async (next = editor?.getHTML() || latestDraftRef.current || "") => {
+    const content = String(next || "");
+    const projectId = bundle.project.id;
+    if (content === lastSavedDraftRef.current) {
+      dirtyRef.current = false;
+      return;
+    }
+    if (inFlightDraftRef.current?.content === content) return inFlightDraftRef.current.promise;
+
+    const seq = ++saveSeqRef.current;
+    if (mountedRef.current) setSaving(true);
+
+    const promise = api.saveDraft(projectId, { content, content_format: "html" })
+      .then(async (savedDraft) => {
+        if (projectIdRef.current !== projectId || seq < saveSeqRef.current) return savedDraft;
+        const savedContent = draftToEditorContent(savedDraft || { content, content_format: "html" });
+        lastSavedDraftRef.current = savedContent;
+        if (latestDraftRef.current === content) dirtyRef.current = false;
+        onDraftSaved(savedDraft || { content, content_format: "html" });
+        return savedDraft;
+      })
+      .catch((error) => {
+        console.error("Draft autosave failed", error);
+        return null;
+      })
+      .finally(() => {
+        if (inFlightDraftRef.current?.content === content) inFlightDraftRef.current = null;
+        if (mountedRef.current && seq === saveSeqRef.current) setSaving(false);
+      });
+
+    inFlightDraftRef.current = { content, promise };
+    return promise;
+  }, [api, bundle.project.id, editor, onDraftSaved]);
+
+  const scheduleDraftSave = useCallback((next = editor?.getHTML() || latestDraftRef.current || "") => {
+    const content = String(next || "");
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      if (content !== lastSavedDraftRef.current || dirtyRef.current) void saveDraft(content);
+    }, 500);
+  }, [editor, saveDraft]);
+
+  const flushDraft = useCallback(() => {
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    const content = editor?.getHTML() || latestDraftRef.current || "";
+    if (content !== lastSavedDraftRef.current || dirtyRef.current) void saveDraft(content);
+  }, [editor, saveDraft]);
+
+  useEffect(() => {
+    scheduleDraftSaveRef.current = scheduleDraftSave;
+    return () => {
+      if (scheduleDraftSaveRef.current === scheduleDraftSave) scheduleDraftSaveRef.current = null;
+    };
+  }, [scheduleDraftSave]);
+
+  useEffect(() => {
     const next = bundle.draft?.content || "";
     const nextEditorContent = draftToEditorContent(bundle.draft);
+    const projectChanged = projectIdRef.current !== bundle.project.id;
+    projectIdRef.current = bundle.project.id;
+
+    if (projectChanged) {
+      dirtyRef.current = false;
+      lastSavedDraftRef.current = nextEditorContent;
+      latestDraftRef.current = nextEditorContent;
+      setDraft(stripHtml(next));
+      if (editor && editor.getHTML() !== nextEditorContent) editor.commands.setContent(nextEditorContent, { emitUpdate: false });
+      return;
+    }
+
+    if (dirtyRef.current && nextEditorContent !== latestDraftRef.current) return;
+
+    lastSavedDraftRef.current = nextEditorContent;
+    latestDraftRef.current = nextEditorContent;
+    dirtyRef.current = false;
     setDraft(stripHtml(next));
-    if (editor && editor.getHTML() !== nextEditorContent && editor.getText() !== next) {
+    if (editor && editor.getHTML() !== nextEditorContent) {
       editor.commands.setContent(nextEditorContent, { emitUpdate: false });
     }
-  }, [bundle.draft?.content, editor]);
+  }, [bundle.draft?.content, bundle.draft?.content_format, bundle.project.id, editor]);
 
-  async function saveDraft(next = editor?.getHTML() || draft) {
-    setSaving(true);
-    triggerAnimation("stage-change", 420);
-    await api.saveDraft(bundle.project.id, { content: next, content_format: "html" });
-    setSaving(false);
-    await onRefresh();
-  }
+  useEffect(() => {
+    const flushOnHidden = () => {
+      if (document.visibilityState === "hidden") flushDraft();
+    };
+    const flushOnPointerAway = (event) => {
+      if (editorRef.current && !editorRef.current.contains(event.target)) flushDraft();
+    };
+    document.addEventListener("pointerdown", flushOnPointerAway, true);
+    document.addEventListener("visibilitychange", flushOnHidden);
+    window.addEventListener("blur", flushDraft);
+    window.addEventListener("pagehide", flushDraft);
+    window.addEventListener("beforeunload", flushDraft);
+    return () => {
+      flushDraft();
+      document.removeEventListener("pointerdown", flushOnPointerAway, true);
+      document.removeEventListener("visibilitychange", flushOnHidden);
+      window.removeEventListener("blur", flushDraft);
+      window.removeEventListener("pagehide", flushDraft);
+      window.removeEventListener("beforeunload", flushDraft);
+    };
+  }, [flushDraft]);
 
   async function linkEvidence(item) {
     if (!pending) return;
@@ -671,7 +816,7 @@ function Drafting({ bundle, api, onRefresh }) {
         <div
           ref={editorRef}
           className="article-editor-shell"
-          onBlur={() => saveDraft()}
+          onBlur={flushDraft}
           onMouseMove={inspectCitation}
           onClick={inspectCitation}
           onMouseLeave={(event) => {
@@ -841,10 +986,78 @@ function NewProjectModal({ onClose, onCreate }) {
 
 function EditableText({ value, onSave, placeholder = "", className = "field" }) {
   const ref = useRef(null);
+  const autosaveTimerRef = useRef(null);
+  const inFlightRef = useRef(null);
+  const latestContentRef = useRef(value || "");
+  const lastSavedRef = useRef(value || "");
+
+  const saveCurrent = useCallback(async () => {
+    const content = ref.current?.innerText ?? latestContentRef.current;
+    if (content === lastSavedRef.current || inFlightRef.current?.content === content) return;
+    const promise = Promise.resolve(onSave(content))
+      .then(() => {
+        lastSavedRef.current = content;
+      })
+      .catch((error) => {
+        console.error("Text autosave failed", error);
+      })
+      .finally(() => {
+        if (inFlightRef.current?.content === content) inFlightRef.current = null;
+      });
+    inFlightRef.current = { content, promise };
+    await promise;
+  }, [onSave]);
+
   useEffect(() => {
-    if (ref.current && ref.current.innerText !== value) ref.current.innerText = value || "";
+    const next = value || "";
+    lastSavedRef.current = next;
+    if (document.activeElement !== ref.current) latestContentRef.current = next;
+    if (ref.current && document.activeElement !== ref.current && ref.current.innerText !== next) {
+      ref.current.innerText = next;
+    }
   }, [value]);
-  return <div ref={ref} className={className} contentEditable suppressContentEditableWarning data-placeholder={placeholder} onBlur={(event) => onSave(event.currentTarget.innerText)} />;
+
+  const scheduleSave = useCallback(() => {
+    latestContentRef.current = ref.current?.innerText ?? latestContentRef.current;
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void saveCurrent();
+    }, 500);
+  }, [saveCurrent]);
+
+  useEffect(() => {
+    const saveIfActive = () => {
+      if (document.activeElement === ref.current) void saveCurrent();
+    };
+    const saveOnHidden = () => {
+      if (document.visibilityState === "hidden") saveIfActive();
+    };
+    const saveOnPointerAway = (event) => {
+      if (ref.current && !ref.current.contains(event.target)) void saveCurrent();
+    };
+    editableTextFlushers.add(saveCurrent);
+    document.addEventListener("pointerdown", saveOnPointerAway, true);
+    document.addEventListener("visibilitychange", saveOnHidden);
+    window.addEventListener("blur", saveIfActive);
+    window.addEventListener("pagehide", saveIfActive);
+    window.addEventListener("beforeunload", saveIfActive);
+    return () => {
+      if (autosaveTimerRef.current) {
+        window.clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      void saveCurrent();
+      editableTextFlushers.delete(saveCurrent);
+      document.removeEventListener("pointerdown", saveOnPointerAway, true);
+      document.removeEventListener("visibilitychange", saveOnHidden);
+      window.removeEventListener("blur", saveIfActive);
+      window.removeEventListener("pagehide", saveIfActive);
+      window.removeEventListener("beforeunload", saveIfActive);
+    };
+  }, [saveCurrent]);
+
+  return <div ref={ref} className={className} contentEditable suppressContentEditableWarning data-placeholder={placeholder} onInput={scheduleSave} onBlur={saveCurrent} />;
 }
 
 function evidenceBlocks(bundle) {

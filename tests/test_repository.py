@@ -143,6 +143,17 @@ def test_article_draft_links_selected_text_to_evidence_and_checks_it(tmp_path):
     assert repo.list_draft_evidence_links(project["id"])[0]["id"] == link["id"]
 
 
+def test_draft_autosave_does_not_change_project_stage(tmp_path):
+    repo = EpistemeRepository(tmp_path / "episteme.sqlite3")
+    project = repo.create_project({"question": "Can saves race tab changes?", "stage": "Publishing"})
+    evidence = repo.create_block(project["id"], {"type": "evidence", "content": "A useful source."})
+
+    repo.save_article_draft(project["id"], {"content": "A finished draft.", "content_format": "markdown"})
+    repo.create_draft_evidence_link(project["id"], {"evidence_block_id": evidence["id"], "selected_text": "finished"})
+
+    assert repo.get_project(project["id"])["stage"] == "Publishing"
+
+
 def test_evidence_priority_orders_unchecked_evidence_for_scroll_panel(tmp_path):
     repo = EpistemeRepository(tmp_path / "episteme.sqlite3")
     project = repo.create_project({"question": "Which evidence should come next?"})

@@ -577,8 +577,8 @@ class EpistemeRepository:
                 (content, content_format, now, project_id),
             )
             connection.execute(
-                "UPDATE projects SET stage = ?, updated_at = ? WHERE id = ?",
-                ("Drafting", now, project_id),
+                "UPDATE projects SET updated_at = ? WHERE id = ?",
+                (now, project_id),
             )
         return self.get_article_draft(project_id)
 
@@ -763,8 +763,8 @@ class EpistemeRepository:
                 (now, evidence_block_id),
             )
             connection.execute(
-                "UPDATE projects SET stage = ?, updated_at = ? WHERE id = ?",
-                ("Drafting", now, project_id),
+                "UPDATE projects SET updated_at = ? WHERE id = ?",
+                (now, project_id),
             )
         return link
 
